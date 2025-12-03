@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Color Space Explorer</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: white; font-family: system-ui, sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; }
+        .panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            padding: 20px;
+            border-radius: 12px;
+            width: 320px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+        .input-group { margin-bottom: 12px; }
+        .input-group label { display: block; font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .color-row { display: flex; align-items: center; gap: 10px; }
+        .hex-input { 
+            background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
+            padding: 6px 10px; border-radius: 6px; width: 100%; font-family: monospace;
+        }
+        select {
+            width: 100%; background: #1e293b; color: white; border: 1px solid #334155;
+            padding: 8px; border-radius: 6px; margin-bottom: 16px;
+        }
+        .help-text { font-size: 0.75rem; color: #64748b; margin-top: 16px; line-height: 1.4; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #334155; transition: all 0.2s; }
+        .status-dot.locked { background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
+        .node-row {
+            display: flex; align-items: center; justify-content: space-between; 
+            padding: 8px; border-radius: 6px; margin-bottom: 4px;
+            border: 1px solid transparent; cursor: pointer;
+        }
+        .node-row:hover { background: rgba(255,255,255,0.05); }
+        .node-row.locked { border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.1); }
+        
+        /* Color inputs */
+        input[type="color"] {
+            appearance: none;
+            -webkit-appearance: none;
+            border: 1px solid #475569;
+            background: transparent;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+            border-radius: 4px;
+        }
+        input[type="color"]::-webkit-color-swatch {
+            border: none;
+            border-radius: 4px;
+        }
+        input:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* Canvas labels */
+        .label-3d {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            font-family: monospace;
+            user-select: none;
+            z-index: 10;
+        }
+    </style>
+    <!-- Import maps polyfill -->
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <!-- 2D labels for 3D nodes -->
+    <div id="label-source" class="label-3d">S</div>
+    <div id="label-blend" class="label-3d">B</div>
+    <div id="label-target" class="label-3d">T</div>
+
+    <div class="panel">
+        <h2 class="text-lg font-bold mb-4 text-white">3D Blender</h2>
+        
+        <div class="input-group">
+            <label>Blend Mode</label>
+            <select id="blend-mode-select"></select>
+        </div>
+
+        <div class="input-group">
+            <label>Nodes (Double-click to lock)</label>
+            
+            <div id="row-source" class="node-row">
+                <div class="flex items-center gap-2">
+                    <div class="status-dot" id="dot-source"></div>
+                    <span class="text-sm font-medium text-cyan-400">Source</span>
+                </div>
+                <div class="color-row">
+                    <input type="color" id="color-source">
+                    <input type="text" id="hex-source" class="hex-input w-20 text-xs" value="#000000">
+                </div>
+            </div>
+
+            <div id="row-blend" class="node-row">
+                <div class="flex items-center gap-2">
+                    <div class="status-dot" id="dot-blend"></div>
+                    <span class="text-sm font-medium text-orange-400">Blend</span>
+                </div>
+                <div class="color-row">
+                    <input type="color" id="color-blend">
+                    <input type="text" id="hex-blend" class="hex-input w-20 text-xs" value="#808080">
+                </div>
+            </div>
+
+            <div id="row-target" class="node-row locked">
+                <div class="flex items-center gap-2">
+                    <div class="status-dot locked" id="dot-target"></div>
+                    <span class="text-sm font-medium text-white">Target</span>
+                </div>
+                <div class="color-row">
+                    <input type="color" id="color-target">
+                    <input type="text" id="hex-target" class="hex-input w-20 text-xs" value="#000000">
+                </div>
+            </div>
+        </div>
+
+        <div class="help-text">
+            <p>• <strong>Drag</strong> circles to move in 3D.</p>
+            <p>• <strong>Scroll</strong> while dragging to move perpendicular to plane.</p>
+            <p>• <strong>Double-click</strong> a node in 3D or the list to Lock it.</p>
+            <p>• <strong>Rotate</strong> view with Left Click.</p>
+        </div>
+        <button id="reset-cam" class="mt-4 w-full py-2 px-3 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold">Reset Camera</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 1. MATH & LOGIC (Ported from index.html) ---
+        
+        const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
+        const isValid = (v) => v !== null && isFinite(v);
+
+        const vividLightChannel = (s, b) => {
+            if (b < 0.5) {
+                if (b <= 0) return 0;
+                return 1 - (1 - s) / (2 * b);
+            }
+            if (b >= 1) return 1;
+            return s / (2 * (1 - b));
+        };
+
+        const applyBlendChannel = (modeName, s, b) => {
+            switch (modeName) {
+                case "Multiply": return s * b;
+                case "Screen": return 1 - (1 - s) * (1 - b);
+                case "Addition": return clamp(s + b, 0, 1);
+                case "Subtract": return clamp(s - b, 0, 1);
+                case "Divide": return b === 0 ? (s === 0 ? 0 : 1) : clamp(s / b, 0, 1);
+                case "Difference": return Math.abs(s - b);
+                case "Overlay": return s < 0.5 ? 2 * s * b : 1 - 2 * (1 - s) * (1 - b);
+                case "Hard Light": return b < 0.5 ? 2 * s * b : 1 - 2 * (1 - s) * (1 - b);
+                case "Soft Light (Pegtop)": return (1 - 2 * b) * s * s + 2 * b * s;
+                case "Color Burn": return b === 0 ? 0 : 1 - (1 - s) / b;
+                case "Linear Burn": return clamp(s + b - 1, 0, 1);
+                case "Color Dodge": return b === 1 ? 1 : s / (1 - b);
+                case "Linear Dodge (Add)": return clamp(s + b, 0, 1);
+                case "Vivid Light": return vividLightChannel(s, b);
+                case "Linear Light": return clamp(s + 2 * b - 1, 0, 1);
+                case "Pin Light": return b < 0.5 ? Math.min(s, 2 * b) : Math.max(s, 2 * b - 1);
+                case "Hard Mix": return vividLightChannel(s, b) < 0.5 ? 0 : 1;
+                default: return s;
+            }
+        };
+
+        const blendModes = [
+            {
+                name: "Multiply",
+                inverse: (s, t) => (s === 0 ? (t === 0 ? 0.5 : null) : t / s),
+                inverseSource: (b, t) => (b === 0 ? (t === 0 ? 0 : null) : t / b)
+            },
+            {
+                name: "Screen",
+                inverse: (s, t) => (s === 1 ? (t === 1 ? 0.5 : null) : 1 - (1 - t) / (1 - s)),
+                inverseSource: (b, t) => (b === 1 ? (t === 1 ? 1 : null) : 1 - (1 - t) / (1 - b))
+            },
+            {
+                name: "Addition",
+                inverse: (s, t) => t - s,
+                inverseSource: (b, t) => t - b
+            },
+            {
+                name: "Subtract",
+                inverse: (s, t) => s - t,
+                inverseSource: (b, t) => t + b
+            },
+            {
+                name: "Divide",
+                inverse: (s, t) => (t === 0 ? (s === 0 ? 0.5 : null) : s / t),
+                inverseSource: (b, t) => t * b
+            },
+            {
+                name: "Difference",
+                inverse: (s, t) => s - t,
+                inverseSource: (b, t) => {
+                   const s1 = b - t;
+                   const s2 = b + t;
+                   if (s1 >= 0 && s1 <= 1) return s1;
+                   if (s2 >= 0 && s2 <= 1) return s2;
+                   return s1;
+                }
+            },
+            {
+                name: "Overlay",
+                inverse: (s, t) => s < 0.5 ? (s === 0 ? (t === 0 ? 0.5 : null) : t / (2 * s)) : (s === 1 ? (t === 1 ? 0.5 : null) : 1 - (1 - t) / (2 * (1 - s))),
+                inverseSource: (b, t) => {
+                    const s1 = b === 0 ? (t===0?0:null) : t / (2 * b);
+                    if (isValid(s1) && s1 < 0.5) return s1;
+                    const s2 = b === 1 ? (t===1?1:null) : 1 - (1 - t) / (2 * (1 - b));
+                    if (isValid(s2) && s2 >= 0.5) return s2;
+                    return isValid(s1) ? s1 : s2; 
+                }
+            },
+            {
+                name: "Hard Light",
+                inverse: (s, t) => {
+                   const b1 = s === 0 ? null : t / (2 * s);
+                   if (isValid(b1) && b1 < 0.5) return b1;
+                   const b2 = s === 1 ? null : 1 - (1 - t) / (2 * (1 - s));
+                   if (isValid(b2) && b2 >= 0.5) return b2;
+                   return isValid(b1) ? b1 : b2;
+                },
+                inverseSource: (b, t) => {
+                    if (b < 0.5) return b === 0 ? (t === 0 ? 0 : null) : t / (2 * b);
+                    return b === 1 ? (t === 1 ? 1 : null) : 1 - (1 - t) / (2 * (1 - b));
+                }
+            },
+            {
+                name: "Soft Light (Pegtop)",
+                inverse: (s, t) => {
+                    if (s === 0 || s === 1) return s === t ? 0.5 : null;
+                    return 0.5 * (1 - (s - t) / (s * (1 - s)));
+                },
+                inverseSource: (b, t) => {
+                    if (Math.abs(b - 0.5) < 1e-5) return t;
+                    const A = 1 - 2 * b;
+                    const B = 2 * b;
+                    const C = -t;
+                    const det = B * B - 4 * A * C;
+                    if (det < 0) return null;
+                    const sqrt = Math.sqrt(det);
+                    const s1 = (-B + sqrt) / (2 * A);
+                    const s2 = (-B - sqrt) / (2 * A);
+                    if (s1 >= 0 && s1 <= 1) return s1;
+                    if (s2 >= 0 && s2 <= 1) return s2;
+                    return s1;
+                }
+            },
+            {
+                name: "Color Burn",
+                inverse: (s, t) => {
+                    if (t > s) return null;
+                    if (s === 0) return t === 0 ? 0.5 : null;
+                    if (t === 1) return null;
+                    return (1 - s) / (1 - t);
+                },
+                inverseSource: (b, t) => 1 - b * (1 - t)
+            },
+            {
+                name: "Linear Burn",
+                inverse: (s, t) => t - s + 1,
+                inverseSource: (b, t) => t - b + 1
+            },
+            {
+                name: "Color Dodge",
+                inverse: (s, t) => {
+                    if (t < s) return null;
+                    if (s === 1) return t === 1 ? 0.5 : null;
+                    if (t === 0) return null;
+                    return 1 - s / t;
+                },
+                inverseSource: (b, t) => t * (1 - b)
+            },
+            {
+                name: "Linear Dodge (Add)",
+                inverse: (s, t) => t - s,
+                inverseSource: (b, t) => t - b
+            },
+            {
+                name: "Vivid Light",
+                inverse: (s, t) => {
+                    let b1 = (t !== 1) ? (1 - s) / (2 * (1 - t)) : (s===1?0.25:null);
+                    if (isValid(b1) && b1 < 0.5) return b1;
+                    let b2 = (t !== 0) ? 1 - s / (2 * t) : (s===0?0.75:null);
+                    if (isValid(b2) && b2 >= 0.5) return b2;
+                    return b1;
+                },
+                inverseSource: (b, t) => {
+                    if (b < 0.5) return 1 - 2 * b * (1 - t);
+                    return t * 2 * (1 - b);
+                }
+            },
+            {
+                name: "Linear Light",
+                inverse: (s, t) => (t - s + 1) / 2,
+                inverseSource: (b, t) => t - 2 * b + 1
+            },
+            {
+                name: "Pin Light",
+                inverse: (s, t) => {
+                   if (t < s) return t / 2;
+                   if (t > s) return (t + 1) / 2;
+                   return 0.5;
+                },
+                inverseSource: (b, t) => t
+            },
+            {
+                name: "Hard Mix",
+                inverse: (s, t) => t === 0 ? 0.25 : (t === 1 ? 0.75 : null),
+                inverseSource: (b, t) => null
+            }
+        ];
+
+        const hexToVec = (hex, target = new THREE.Vector3()) => {
+            if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return target;
+            const r = parseInt(hex.slice(1,3), 16) / 255;
+            const g = parseInt(hex.slice(3,5), 16) / 255;
+            const b = parseInt(hex.slice(5,7), 16) / 255;
+            target.set(r, g, b);
+            return target;
+        };
+
+        // --- 2. STATE MANAGEMENT ---
+
+        const state = {
+            source: new THREE.Vector3(0, 0, 0),
+            blend: new THREE.Vector3(0.5, 0.5, 0.5),
+            target: new THREE.Vector3(0, 0, 0),
+            locked: 'target',
+            mode: blendModes[0].name
+        };
+
+        // --- 3. THREE.JS SETUP ---
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f172a);
+        scene.fog = new THREE.Fog(0x0f172a, 5, 15);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(2.5, 2, 3);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // --- 4. SCENE OBJECTS ---
+
+        // A. RGB Cube Frame
+        const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+        const edges = new THREE.EdgesGeometry(boxGeo);
+        const boxMat = new THREE.LineBasicMaterial({ color: 0x334155 });
+        const cubeFrame = new THREE.LineSegments(edges, boxMat);
+        cubeFrame.position.set(0.5, 0.5, 0.5);
+        scene.add(cubeFrame);
+
+        // B. Axes
+        const addAxis = (dir, color) => {
+            const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(0,0,0), 1.2, color, 0.1, 0.05);
+            scene.add(arrow);
+        };
+        addAxis(new THREE.Vector3(1,0,0), 0xef4444);
+        addAxis(new THREE.Vector3(0,1,0), 0x22c55e);
+        addAxis(new THREE.Vector3(0,0,1), 0x3b82f6);
+
+        // C. Nodes
+        const sphereGeo = new THREE.SphereGeometry(0.04, 32, 32);
+        
+        const createNode = (color, name) => {
+            const mat = new THREE.MeshBasicMaterial({ color: color });
+            const mesh = new THREE.Mesh(sphereGeo, mat);
+            mesh.userData = { isNode: true, name: name };
+            scene.add(mesh);
+            
+            const haloGeo = new THREE.RingGeometry(0.05, 0.06, 32);
+            const haloMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide });
+            const halo = new THREE.Mesh(haloGeo, haloMat);
+            mesh.add(halo);
+            halo.lookAt(camera.position);
+            
+            return { mesh, halo, mat };
+        };
+
+        const nodes = {
+            source: createNode(0x22d3ee, 'source'),
+            blend: createNode(0xf97316, 'blend'),
+            target: createNode(0xffffff, 'target')
+        };
+
+        // D. Arrows
+        const linkSB = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(), 0, 0x22d3ee, 0.05, 0.03);
+        const linkBT = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(), 0, 0xf97316, 0.05, 0.03);
+        scene.add(linkSB);
+        scene.add(linkBT);
+
+        // E. Slice Plane (colored slice)
+        const planeGeo = new THREE.PlaneGeometry(5, 5);
+        const planeMat = new THREE.ShaderMaterial({
+            side: THREE.DoubleSide,
+            transparent: true,
+            depthWrite: false,
+            uniforms: {},
+            vertexShader: `
+                varying vec3 vWorldPos;
+                void main() {
+                    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                    vWorldPos = worldPos.xyz;
+                    gl_Position = projectionMatrix * viewMatrix * worldPos;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vWorldPos;
+                void main() {
+                    if (vWorldPos.x < -0.01 || vWorldPos.x > 1.01 ||
+                        vWorldPos.y < -0.01 || vWorldPos.y > 1.01 ||
+                        vWorldPos.z < -0.01 || vWorldPos.z > 1.01) {
+                        discard;
+                    }
+                    vec3 c = clamp(vWorldPos, 0.0, 1.0);
+                    gl_FragColor = vec4(c, 0.55);
+                }
+            `
+        });
+        const slicePlane = new THREE.Mesh(planeGeo, planeMat);
+        scene.add(slicePlane);
+        
+        const planeGrid = new THREE.GridHelper(5, 20, 0xffffff, 0xffffff);
+        planeGrid.rotation.x = Math.PI / 2;
+        planeGrid.material.opacity = 0.05;
+        planeGrid.material.transparent = true;
+        slicePlane.add(planeGrid);
+
+        // --- 5. INTERACTION LOGIC ---
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const dragPlane = new THREE.Plane();
+        let draggedNode = null;
+
+        const updateUI = () => {
+            ['source', 'blend', 'target'].forEach(key => {
+                const dot = document.getElementById(`dot-${key}`);
+                const row = document.getElementById(`row-${key}`);
+                const hexInput = document.getElementById(`hex-${key}`);
+                const colorInput = document.getElementById(`color-${key}`);
+
+                if (state.locked === key) {
+                    dot.classList.add('locked');
+                    row.classList.add('locked');
+                    nodes[key].halo.material.color.set(0xef4444);
+                    nodes[key].halo.material.opacity = 0.8;
+                } else {
+                    dot.classList.remove('locked');
+                    row.classList.remove('locked');
+                    nodes[key].halo.material.opacity = 0;
+                }
+
+                const v = state[key];
+                const r = Math.round(clamp(v.x, 0, 1) * 255);
+                const g = Math.round(clamp(v.y, 0, 1) * 255);
+                const b = Math.round(clamp(v.z, 0, 1) * 255);
+                const hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+
+                if (document.activeElement !== hexInput) {
+                    hexInput.value = hex;
+                }
+                if (colorInput && document.activeElement !== colorInput) {
+                    colorInput.value = hex;
+                }
+
+                // Locking only affects drag/solve behavior, not manual editing.
+                nodes[key].mat.color.setRGB(clamp(v.x,0,1), clamp(v.y,0,1), clamp(v.z,0,1));
+            });
+        };
+
+        const solveMath = () => {
+            const mode = blendModes.find(m => m.name === state.mode);
+            if (!mode) return;
+
+            const s = state.source;
+            const b = state.blend;
+            const t = state.target;
+
+            if (draggedNode === 'source') {
+                if (state.locked === 'target') {
+                    b.x = mode.inverse(s.x, t.x) || 0;
+                    b.y = mode.inverse(s.y, t.y) || 0;
+                    b.z = mode.inverse(s.z, t.z) || 0;
+                } else {
+                    t.x = applyBlendChannel(state.mode, s.x, b.x);
+                    t.y = applyBlendChannel(state.mode, s.y, b.y);
+                    t.z = applyBlendChannel(state.mode, s.z, b.z);
+                }
+            } else if (draggedNode === 'blend') {
+                if (state.locked === 'target') {
+                    if (mode.inverseSource) {
+                        s.x = mode.inverseSource(b.x, t.x) || 0;
+                        s.y = mode.inverseSource(b.y, t.y) || 0;
+                        s.z = mode.inverseSource(b.z, t.z) || 0;
+                    }
+                } else {
+                    t.x = applyBlendChannel(state.mode, s.x, b.x);
+                    t.y = applyBlendChannel(state.mode, s.y, b.y);
+                    t.z = applyBlendChannel(state.mode, s.z, b.z);
+                }
+            } else if (draggedNode === 'target') {
+                if (state.locked === 'blend') {
+                    if (mode.inverseSource) {
+                        s.x = mode.inverseSource(b.x, t.x) || 0;
+                        s.y = mode.inverseSource(b.y, t.y) || 0;
+                        s.z = mode.inverseSource(b.z, t.z) || 0;
+                    }
+                } else {
+                    b.x = mode.inverse(s.x, t.x) || 0;
+                    b.y = mode.inverse(s.y, t.y) || 0;
+                    b.z = mode.inverse(s.z, t.z) || 0;
+                }
+            } else {
+                if (state.locked === 'target') {
+                     b.x = mode.inverse(s.x, t.x) || 0;
+                     b.y = mode.inverse(s.y, t.y) || 0;
+                     b.z = mode.inverse(s.z, t.z) || 0;
+                } else if (state.locked === 'source') {
+                     t.x = applyBlendChannel(state.mode, s.x, b.x);
+                     t.y = applyBlendChannel(state.mode, s.y, b.y);
+                     t.z = applyBlendChannel(state.mode, s.z, b.z);
+                } else {
+                     t.x = applyBlendChannel(state.mode, s.x, b.x);
+                     t.y = applyBlendChannel(state.mode, s.y, b.y);
+                     t.z = applyBlendChannel(state.mode, s.z, b.z);
+                }
+            }
+        };
+
+        const updateVisuals = () => {
+            nodes.source.mesh.position.copy(state.source);
+            nodes.blend.mesh.position.copy(state.blend);
+            nodes.target.mesh.position.copy(state.target);
+
+            const vSB = new THREE.Vector3().subVectors(state.blend, state.source);
+            const lenSB = vSB.length();
+            if (lenSB > 0.001) {
+                linkSB.position.copy(state.source);
+                linkSB.setDirection(vSB.normalize());
+                linkSB.setLength(lenSB, 0.1, 0.05);
+                linkSB.visible = true;
+            } else { linkSB.visible = false; }
+
+            const vBT = new THREE.Vector3().subVectors(state.target, state.blend);
+            const lenBT = vBT.length();
+            if (lenBT > 0.001) {
+                linkBT.position.copy(state.blend);
+                linkBT.setDirection(vBT.normalize());
+                linkBT.setLength(lenBT, 0.1, 0.05);
+                linkBT.visible = true;
+            } else { linkBT.visible = false; }
+
+            const u = new THREE.Vector3().subVectors(state.blend, state.source).normalize();
+            const vTemp = new THREE.Vector3().subVectors(state.target, state.source);
+            if (u.lengthSq() < 0.0001) u.copy(vTemp).normalize();
+            
+            const normal = new THREE.Vector3().crossVectors(u, vTemp).normalize();
+            if (normal.lengthSq() < 0.01) {
+                 normal.set(0, 1, 0);
+            }
+
+            const center = new THREE.Vector3().add(state.source).add(state.blend).add(state.target).divideScalar(3);
+            
+            slicePlane.position.copy(center);
+            slicePlane.lookAt(center.clone().add(normal));
+            
+            Object.values(nodes).forEach(n => n.halo.lookAt(camera.position));
+        };
+
+        // --- 6. EVENTS ---
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.panel')) return;
+
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects([
+                nodes.source.mesh, nodes.blend.mesh, nodes.target.mesh
+            ]);
+
+            if (intersects.length > 0) {
+                const name = intersects[0].object.userData.name;
+                if (state.locked === name) return;
+
+                draggedNode = name;
+                controls.enabled = false;
+                
+                dragPlane.setFromNormalAndCoplanarPoint(
+                    camera.getWorldDirection(new THREE.Vector3()),
+                    intersects[0].object.position
+                );
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+            if (draggedNode) {
+                raycaster.setFromCamera(mouse, camera);
+                const targetPoint = new THREE.Vector3();
+                
+                if (raycaster.ray.intersectPlane(dragPlane, targetPoint)) {
+                    state[draggedNode].copy(targetPoint);
+                    solveMath();
+                    updateVisuals();
+                    updateUI();
+                }
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            draggedNode = null;
+            controls.enabled = true;
+        });
+
+        window.addEventListener('wheel', (e) => {
+            if (draggedNode) {
+                const normal = camera.getWorldDirection(new THREE.Vector3());
+                const delta = e.deltaY * 0.001;
+                
+                state[draggedNode].addScaledVector(normal, -delta);
+                dragPlane.setFromNormalAndCoplanarPoint(normal, state[draggedNode]);
+                
+                solveMath();
+                updateVisuals();
+                updateUI();
+            }
+        });
+
+        window.addEventListener('dblclick', (e) => {
+            if (e.target.closest('.panel')) return;
+
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects([
+                nodes.source.mesh, nodes.blend.mesh, nodes.target.mesh
+            ]);
+
+            if (intersects.length > 0) {
+                state.locked = intersects[0].object.userData.name;
+                solveMath();
+                updateVisuals();
+                updateUI();
+            }
+        });
+
+        const select = document.getElementById('blend-mode-select');
+        blendModes.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m.name;
+            opt.text = m.name;
+            select.appendChild(opt);
+        });
+        
+        select.addEventListener('change', (e) => {
+            state.mode = e.target.value;
+            solveMath();
+            updateVisuals();
+            updateUI();
+        });
+        
+        ['source', 'blend', 'target'].forEach(k => {
+            document.getElementById(`row-${k}`).addEventListener('dblclick', () => {
+                state.locked = k;
+                solveMath();
+                updateVisuals();
+                updateUI();
+            });
+        });
+        
+        document.getElementById('reset-cam').addEventListener('click', () => {
+            camera.position.set(2.5, 2, 3);
+            camera.lookAt(0,0,0);
+            controls.reset();
+        });
+
+        const bindColorInputs = (key) => {
+            const hexInput = document.getElementById(`hex-${key}`);
+            const colorInput = document.getElementById(`color-${key}`);
+
+            const applyHex = (val) => {
+                if (!/^#[0-9a-fA-F]{6}$/.test(val)) return;
+                hexToVec(val, state[key]);
+                draggedNode = null;
+                solveMath();
+                updateVisuals();
+                updateUI();
+            };
+
+            hexInput.addEventListener('input', (e) => applyHex(e.target.value));
+            if (colorInput) {
+                colorInput.addEventListener('input', (e) => applyHex(e.target.value));
+            }
+        };
+
+        ['source', 'blend', 'target'].forEach(bindColorInputs);
+
+        // --- 7. INITIALIZATION ---
+        
+        const init = () => {
+            const params = new URLSearchParams(window.location.search);
+
+            if (params.get('source')) hexToVec(params.get('source'), state.source);
+            if (params.get('target')) {
+                hexToVec(params.get('target'), state.target);
+                state.locked = 'target';
+            }
+
+            // Optional mode parameter to start explorer in a specific blend mode
+            const modeParam = params.get('mode');
+            if (modeParam) {
+                const found = blendModes.find(m => m.name === modeParam);
+                if (found) {
+                    state.mode = found.name;
+                    const selectEl = document.getElementById('blend-mode-select');
+                    if (selectEl) selectEl.value = found.name;
+                }
+            }
+            
+            solveMath();
+            updateVisuals();
+            updateUI();
+
+            const labelSource = document.getElementById('label-source');
+            const labelBlend = document.getElementById('label-blend');
+            const labelTarget = document.getElementById('label-target');
+
+            const updateLabels = () => {
+                const updateLabelForNode = (node, labelEl) => {
+                    const pos = node.mesh.position.clone();
+                    pos.project(camera);
+                    const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+                    const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+                    labelEl.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
+                };
+
+                updateLabelForNode(nodes.source, labelSource);
+                updateLabelForNode(nodes.blend, labelBlend);
+                updateLabelForNode(nodes.target, labelTarget);
+            };
+
+            const animate = () => {
+                requestAnimationFrame(animate);
+                controls.update();
+                renderer.render(scene, camera);
+                updateLabels();
+            };
+            animate();
+        };
+        
+        init();
+
+    </script>
+</body>
+</html>

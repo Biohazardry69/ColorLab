@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multi Color Blender</title>
+
+    <!-- Tailwind via CDN (required) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+    <!-- External CSS -->
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <a href="https://github.com/Biohazardry69/ColorLab" target="_blank" class="github-btn" title="View on GitHub" aria-label="View on GitHub">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+        </svg>
+    </a>
+
+    <button id="theme-toggle" class="theme-toggle-btn" title="Toggle Dark Mode" aria-label="Toggle Dark Mode">
+        <svg id="icon-sun" class="hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+        </svg>
+        <svg id="icon-moon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+        </svg>
+    </button>
+
+    <header>
+        <h1>Multi Color Blender</h1>
+        <p class="subtitle">Find the optimal blend color for multiple source-target pairs.</p>
+    </header>
+
+    <div class="app-layout">
+        <div class="top-section">
+            <div class="card card-pairs">
+                <div class="main-tabs">
+                    <button class="pairs-tab active" data-pairs-tab="manual">Manually Define Colors</button>
+                    <button class="pairs-tab" data-pairs-tab="extract">Extract From Images</button>
+                </div>
+                
+                <!-- Tab 1: Manual -->
+                <div id="pairs-tab-manual" class="pairs-tab-content active">
+                    <div class="manual-layout">
+                        <!-- Left Column: Pairs List -->
+                        <div class="manual-pairs-column">
+                            <!-- Pairs container - populated by JavaScript -->
+                            <div id="pairs-container" class="pairs-container"></div>
+                            
+                            <!-- Add pair button -->
+                            <button id="add-pair-btn" class="btn-add-pair" style="margin-top: 16px;">
+                                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                </svg>
+                                Add Another Pair
+                            </button>
+                        </div>
+
+                        <!-- Right Column: History -->
+                        <div class="manual-history-column">
+                            <h3>Color History</h3>
+                            <div id="history-grid" class="history-grid">
+                                <div class="history-empty">No colors yet. Pick some colors to build your history.</div>
+                            </div>
+                            <div class="history-hint">Click a color swatch after selecting a color input to apply it.</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Tab 2: Extract -->
+                <div id="pairs-tab-extract" class="pairs-tab-content">
+                    <div class="picker-layout">
+                        <!-- Source Column -->
+                        <div class="picker-column">
+                            <h2>Source Image</h2>
+                            <div class="upload-zone" id="dropSource" tabindex="0">
+                                <button class="clear-btn" id="clearSource" title="Clear Image">&times;</button>
+                                <div class="upload-placeholder">
+                                    <strong>Paste Image (Ctrl+V)</strong>
+                                    <span class="text-muted" style="color:var(--text-muted); font-size:0.9rem">or</span>
+                                    <button class="browse-link" id="btnSource">Browse Files</button>
+                                </div>
+                                <div class="pan-zoom-container" id="containerSource">
+                                    <div class="layer-stack" id="stackSource">
+                                        <img id="imgSource" alt="Source">
+                                    </div>
+                                </div>
+                                <input type="file" id="fileSource" accept="image/*">
+                            </div>
+                        </div>
+
+                        <!-- Target Column -->
+                        <div class="picker-column">
+                            <h2>Target Image</h2>
+                            <div class="upload-zone" id="dropTarget" tabindex="0">
+                                <button class="clear-btn" id="clearTarget" title="Clear Image">&times;</button>
+                                <div class="upload-placeholder">
+                                    <strong>Paste Image (Ctrl+V)</strong>
+                                    <span class="text-muted" style="color:var(--text-muted); font-size:0.9rem">or</span>
+                                    <button class="browse-link" id="btnTarget">Browse Files</button>
+                                </div>
+                                <div class="pan-zoom-container" id="containerTarget">
+                                    <div class="layer-stack" id="stackTarget">
+                                        <img id="imgTarget" alt="Target">
+                                    </div>
+                                </div>
+                                <input type="file" id="fileTarget" accept="image/*">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-bar">
+                        <!-- Mode Toggle -->
+                        <div class="mode-toggle">
+                            <button class="mode-btn active" id="btnModeAuto" onclick="setMode('auto')">Auto Extract</button>
+                            <button class="mode-btn" id="btnModeManual" onclick="setMode('manual')">Manual Select</button>
+                        </div>
+
+                        <div class="divider"></div>
+
+                        <!-- Auto Settings -->
+                        <div id="settingsAuto" class="settings-group">
+                            <div class="input-group">
+                                <label for="algorithmSelect">Method:</label>
+                                <select id="algorithmSelect">
+                                    <option value="kmeans">K-Means (Average)</option>
+                                    <option value="distinct">Distinct (Frequency)</option>
+                                    <option value="quantiles">Luminance Zones</option>
+                                </select>
+                            </div>
+                            <div class="input-group">
+                                <label for="colorCount">Pairs:</label>
+                                <input type="number" id="colorCount" value="5" min="2" max="10">
+                            </div>
+                            <button class="btn-compute" id="btnGenerate">
+                                <div class="spinner"></div>
+                                <span>Generate Pairs</span>
+                            </button>
+                        </div>
+
+                        <!-- Manual Settings -->
+                        <div id="settingsManual" class="settings-group hidden">
+                            <p class="manual-hint">Click on both images to pair colors (<span id="manualCount">0</span>/10)</p>
+                            
+                            <button class="btn-secondary-small" id="btnResetManual">Reset</button>
+                            
+                            <div class="divider hidden-sm" style="height: 24px; margin: 0 4px;"></div>
+                            
+                            <button class="btn-primary-small" id="btnSelectManual" title="Use current selections exactly as they are">Select Colors w/o Optimization</button>
+                            
+                            <!-- Group optimization button and input -->
+                            <div class="manual-opt-group">
+                                <button class="btn-primary-small" id="btnOptimizeManual" title="Use manual selections as seeds for K-Means">
+                                    <div class="spinner-small"></div>
+                                    <span>Select Colors with Optimization</span>
+                                </button>
+                                <div class="input-group">
+                                    <label for="manualTotalPairs">Number of pairs for optimizer:</label>
+                                    <input type="number" id="manualTotalPairs" value="1" min="1" max="10">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="results-container" class="hidden">
+                        <h2>Extracted Pairs</h2>
+                        <div class="results-grid" id="results-grid">
+                            <!-- populated by js -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card results-card">
+            <div class="main-tabs">
+                <button class="main-tab active" data-tab="simple">Simple Blend Calculation</button>
+                <button class="main-tab" data-tab="multistep">Advanced Blend Calculation</button>
+                <button class="main-tab" data-tab="hsl">Hue/Saturation Tool</button>
+            </div>
+
+            <!-- Tab 1: Simple -->
+            <div id="tab-simple" class="tab-content active">
+                <h2 class="results-title" style="margin: 0;">Blend Calculations</h2>
+            
+                <p class="results-desc">
+                    Optimal blend colors that minimize perceptual error (ΔE) across all pairs.
+                </p>
+
+                <div id="results-placeholder" class="placeholder" style="display: block">
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        style="width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.3"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"
+                        />
+                    </svg>
+                    <div>Select Source and Target colors for at least one pair to see results</div>
+                </div>
+
+                <div class="results-table-wrapper">
+                    <table id="results-table">
+                        <thead>
+                            <tr>
+                                <th>Blend Mode</th>
+                                <th>Optimal Blend Color</th>
+                                <th>Hex Code</th>
+                                <th>Weighted Avg ΔE</th>
+                                <th style="width: 60px;">Preview</th>
+                                <th>Export</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab 2: Advanced Blend -->
+            <div id="tab-multistep" class="tab-content card-multistep" style="margin-bottom: 0; padding: 0; box-shadow: none; border: none; background: transparent;">
+                <h2 class="results-title" style="margin: 0 0 8px 0;">Advanced Blend Solution</h2>
+                <p class="results-desc">
+                    Optimize blend modes with opacity control for better color matching.
+                </p>
+                
+                <div class="multistep-controls">
+                    <div class="control-group">
+                        <label for="num-steps">Layers:</label>
+                        <input type="number" id="num-steps" min="1" max="5" value="2">
+                    </div>
+                    <div class="control-group">
+                        <label for="min-opacity">Min Opacity:</label>
+                        <input type="number" id="min-opacity" min="1" max="100" value="10">
+                        <span class="control-unit">%</span>
+                    </div>
+                    <div class="control-group">
+                        <label for="max-opacity">Max Opacity:</label>
+                        <input type="number" id="max-opacity" min="1" max="100" value="100">
+                        <span class="control-unit">%</span>
+                    </div>
+                    <div class="checkbox-control">
+                        <input type="checkbox" id="allow-hsl">
+                        <label for="allow-hsl">Allow Hue/Saturation Tool</label>
+                    </div>
+                    <button id="compute-multistep" class="btn-compute">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 18px; height: 18px;">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                        Compute Optimal Chain
+                    </button>
+                </div>
+                
+                <div id="multistep-result"></div>
+            </div>
+
+            <!-- Tab 3: HSL Tool -->
+            <div id="tab-hsl" class="tab-content" style="margin-bottom: 0; padding: 0; box-shadow: none; border: none; background: transparent;">
+                <h2 class="results-title" style="margin: 0 0 8px 0;">Hue/Saturation Tool</h2>
+                <p class="results-desc">
+                    Find optimal Hue, Saturation, and Lightness adjustments to transform source colors toward target colors.
+                </p>
+                
+                <div id="hsl-result"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail modal -->
+    <div id="detail-modal" class="modal-overlay hidden" aria-hidden="true">
+        <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <div class="modal-header">
+                <div>
+                    <div id="modal-status-badge" class="modal-badge"></div>
+                    <div id="modal-title" class="modal-title"></div>
+                </div>
+                <button id="modal-close" class="modal-close-btn" aria-label="Close detail dialog">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+                        <path
+                            fill-rule="evenodd"
+                            d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                            clip-rule="evenodd"
+                        />
+                    </svg>
+                </button>
+            </div>
+            <div id="modal-body" class="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div id="preview-modal" class="modal-overlay hidden" aria-hidden="true">
+        <div class="modal-panel" role="dialog" aria-modal="true" style="max-width: 900px;">
+            <div class="modal-header">
+                <div class="modal-title">Result Preview</div>
+                <button id="preview-close" class="modal-close-btn" aria-label="Close preview dialog">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+            </div>
+            <div id="preview-body" class="modal-body preview-body">
+                <div class="preview-grid">
+                    <div class="preview-card">
+                        <h5 class="preview-label">Source</h5>
+                        <div class="preview-img-container">
+                            <img id="preview-img-source" class="preview-img" alt="Source" />
+                            <div id="preview-no-source" class="preview-empty">No Image</div>
+                        </div>
+                        <div class="preview-swatches" id="preview-swatches-source"></div>
+                    </div>
+                    <div class="preview-card">
+                        <h5 class="preview-label">Target</h5>
+                        <div class="preview-img-container">
+                            <img id="preview-img-target" class="preview-img" alt="Target" />
+                            <div id="preview-no-target" class="preview-empty">No Image</div>
+                        </div>
+                        <div class="preview-swatches" id="preview-swatches-target"></div>
+                    </div>
+                    <div class="preview-card full-width">
+                        <h5 class="preview-label">Preview</h5>
+                        <div class="preview-img-container">
+                            <canvas id="preview-canvas-result" class="preview-img"></canvas>
+                            <div id="preview-no-result" class="preview-empty">Requires Source Image</div>
+                        </div>
+                        <div class="preview-swatches" id="preview-swatches-result"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- External JavaScript files (order matters due to dependencies) -->
+    <script src="colorUtils.js"></script>
+    <script src="blendModes.js"></script>
+    <script src="extractImageColors.js"></script>
+    <script src="state.js"></script>
+    <script src="optimizer.js"></script>
+    <script src="multiStepOptimizer.js"></script>
+    <script src="hslTool.js"></script>
+    <script src="photopeaExport.js"></script>
+    <script src="ui.js"></script>
+    <script src="rgbPlot.js"></script>
+    <script src="modal.js"></script>
+    <script src="preview.js"></script>
+    <script src="main.js"></script>
+    <script src="imageExtractorScript.js"></script>
+</body>
+</html>
