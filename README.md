@@ -43,11 +43,11 @@ Don't have hex codes? Upload images directly.
 
 # FAQ
 
-- Q: Why does this website exist?
+- Q: **Why does this website exist?**
 I wanted to learn more about color theory and blend modes, but instad of doing that, I automated the whole process 😅
 
-- Q: How accurate are the results?
+- Q: **How accurate are the results?**
 I tested quite a few source colors, blend modes, and blend colors in Photopea. Most results are accurate beween 0-10 R/G/B values. Some blend effects seem to introduce some weird rounding. For Photoshop, I can't really tell, but I'd guess it is similarly close.
 
-- Q: Did you really program all of that?
+- Q: **Did you really program all of that?**
 Nope, I did use multiple AIs to "vibe" code most of it. But I still spend a lot of time making sure everything is bug free(-ish).
