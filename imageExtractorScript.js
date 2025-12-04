@@ -2,6 +2,7 @@
 
 
 
+
 // Marker colors for manual selection (Distinct palette)
 const MARKER_COLORS = [
     '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#00FFFF', 
@@ -532,9 +533,13 @@ async function runOptimizationWithSeeds(k, sSeeds, tSeeds) {
     const sourceInput = document.getElementById('fileSource');
     const targetInput = document.getElementById('fileTarget');
     
+    // Use a strong anchor weight (~1000 pixels worth of influence)
+    // This ensures the cluster centroid stays very close to the manually selected seed
+    const ANCHOR_WEIGHT = 1000;
+
     // Extract with seeds
-    const sourceData = await extractColors(sourceInput.files[0], k, 'kmeans', { seeds: sSeeds });
-    const targetData = await extractColors(targetInput.files[0], k, 'kmeans', { seeds: tSeeds });
+    const sourceData = await extractColors(sourceInput.files[0], k, 'kmeans', { seeds: sSeeds, anchorWeight: ANCHOR_WEIGHT });
+    const targetData = await extractColors(targetInput.files[0], k, 'kmeans', { seeds: tSeeds, anchorWeight: ANCHOR_WEIGHT });
     
     // Store data for visualization
     lastAnalysis.source = sourceData;

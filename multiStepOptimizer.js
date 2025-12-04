@@ -1,10 +1,17 @@
-
-
 // Multi-step blend optimizer - finds optimal sequence of blend modes and colors
 // Uses hybrid approach: greedy search + joint refinement with cancellation support
 // Enhanced with multiple random restarts and basin hopping to escape local minima
 
 const HSL_MODE_NAME = "Hue/Saturation";
+const LEVELS_MODE_NAME = "Levels";
+
+/**
+ * Helper to get parameter count for a mode (excluding opacity)
+ */
+const getModeParamCount = (modeName) => {
+    if (modeName === LEVELS_MODE_NAME) return 5;
+    return 3;
+};
 
 /**
  * Apply a single blend to a normalized RGB color with opacity
@@ -13,18 +20,48 @@ const HSL_MODE_NAME = "Hue/Saturation";
 const applyBlendNorm = (modeName, sourceNorm, blendNorm, opacity = 1) => {
     if (modeName === HSL_MODE_NAME) {
         // For HSL mode, blendNorm contains [hueNorm, satNorm, lightNorm] (0-1)
-        // Map to ranges:
-        // Hue: -180 to 180
-        // Sat: -100 to 100
-        // Light: -100 to 100
         const h = (blendNorm[0] * 360) - 180;
         const s = (blendNorm[1] * 200) - 100;
         const l = (blendNorm[2] * 200) - 100;
         
         const sRgb = sourceNorm.map(c => Math.round(c * 255));
-        
-        // applyHslAdjustment returns RGB [0-255]
         const resRgb = applyHslAdjustment(sRgb, h, s, l);
+        const resNorm = resRgb.map(c => c / 255);
+        
+        return [
+            clamp(opacity * resNorm[0] + (1 - opacity) * sourceNorm[0], 0, 1),
+            clamp(opacity * resNorm[1] + (1 - opacity) * sourceNorm[1], 0, 1),
+            clamp(opacity * resNorm[2] + (1 - opacity) * sourceNorm[2], 0, 1)
+        ];
+    }
+    
+    if (modeName === LEVELS_MODE_NAME) {
+        // Levels params: InputBlack, InputWhite, Gamma, OutputBlack, OutputWhite
+        // Mapped from normalized 0-1
+        
+        // 1. Enforce Input Black < Input White Constraint
+        let inBlack = blendNorm[0] * 255;
+        let inWhite = blendNorm[1] * 255;
+        
+        // Clamp Black to [0, 253] to leave room for White
+        inBlack = Math.min(253, Math.max(0, inBlack));
+        
+        // Ensure White is at least Black + 2
+        inWhite = Math.max(inBlack + 2, Math.min(255, inWhite));
+        
+        // 2. Map Gamma (0.1 to 9.99)
+        const gamma = Math.max(0.1, Math.min(9.99, blendNorm[2] * 9.89 + 0.1));
+
+        const params = {
+            inputBlack: inBlack,
+            inputWhite: inWhite,
+            inputGamma: gamma,
+            outputBlack: blendNorm[3] * 255,
+            outputWhite: blendNorm[4] * 255
+        };
+        
+        const sRgb = sourceNorm.map(c => Math.round(c * 255));
+        const resRgb = applyLevelsAdjustment(sRgb, params);
         const resNorm = resRgb.map(c => c / 255);
         
         return [
@@ -46,17 +83,6 @@ const applyBlendNorm = (modeName, sourceNorm, blendNorm, opacity = 1) => {
 };
 
 /**
- * Apply a sequence of blend steps to a color
- */
-const applyBlendSequence = (sourceNorm, steps) => {
-    let current = sourceNorm.slice();
-    for (const step of steps) {
-        current = applyBlendNorm(step.modeName, current, step.blend, step.opacity);
-    }
-    return current;
-};
-
-/**
  * Compute total weighted error for a multi-step solution across all pairs
  */
 const computeMultiStepError = (pairs, steps) => {
@@ -72,7 +98,6 @@ const computeMultiStepError = (pairs, steps) => {
         if (!sRgb || !tRgb) continue;
         
         const sNorm = sRgb.map(c => c / 255);
-        const tNorm = tRgb.map(c => c / 255);
         const weight = pair.weight !== undefined ? pair.weight : 1;
         
         // Track intermediate colors
@@ -119,13 +144,13 @@ const computeMultiStepError = (pairs, steps) => {
 };
 
 /**
- * Multi-dimensional Nelder-Mead for joint optimization with random restarts
- * Handles 4D optimization per step (R, G, B, A) or (H, S, L, A)
+ * Multi-dimensional Nelder-Mead for joint optimization
+ * Accepts paramConfigs to handle variable bounds per dimension
  */
 const nelderMeadMultiDim = (objective, initial, options = {}) => {
     const maxIterations = options.maxIterations || 500;
     const tolerance = options.tolerance || 1e-8;
-    const opacityBounds = options.opacityBounds || { min: 0.1, max: 1.0 };
+    const paramConfigs = options.paramConfigs || []; // Array of {min, max}
     
     const alpha = 1.0;
     const gamma = 2.0;
@@ -135,14 +160,10 @@ const nelderMeadMultiDim = (objective, initial, options = {}) => {
     const n = initial.length;
     
     // Helper to clamp parameters
-    // Indices: 0,1,2 (Params), 3 (Opacity), 4,5,6 (Params), 7 (Opacity)...
     const clampParams = (v) => {
         return v.map((val, idx) => {
-            if ((idx + 1) % 4 === 0) { // Opacity channel
-                return clamp(val, opacityBounds.min, opacityBounds.max);
-            } else { // Param channel (RGB or HSL-Norm)
-                return clamp(val, 0, 1);
-            }
+            const config = paramConfigs[idx] || { min: 0, max: 1 };
+            return clamp(val, config.min, config.max);
         });
     };
     
@@ -159,7 +180,6 @@ const nelderMeadMultiDim = (objective, initial, options = {}) => {
     let values = simplex.map(v => objective(v));
     
     for (let iter = 0; iter < maxIterations; iter++) {
-        // Sort by objective value
         const indices = values.map((v, i) => i).sort((a, b) => values[a] - values[b]);
         const sortedSimplex = indices.map(i => simplex[i].slice());
         const sortedValues = indices.map(i => values[i]);
@@ -169,11 +189,9 @@ const nelderMeadMultiDim = (objective, initial, options = {}) => {
             values[i] = sortedValues[i];
         }
         
-        // Check convergence
         const range = values[n] - values[0];
         if (range < tolerance) break;
         
-        // Compute centroid
         const centroid = Array(n).fill(0);
         for (let i = 0; i < n; i++) {
             for (let j = 0; j < n; j++) {
@@ -184,10 +202,7 @@ const nelderMeadMultiDim = (objective, initial, options = {}) => {
             centroid[j] /= n;
         }
         
-        // Reflection
-        const reflected = clampParams(centroid.map((c, j) => 
-            c + alpha * (c - simplex[n][j])
-        ));
+        const reflected = clampParams(centroid.map((c, j) => c + alpha * (c - simplex[n][j])));
         const reflectedValue = objective(reflected);
         
         if (reflectedValue >= values[0] && reflectedValue < values[n - 1]) {
@@ -196,11 +211,8 @@ const nelderMeadMultiDim = (objective, initial, options = {}) => {
             continue;
         }
         
-        // Expansion
         if (reflectedValue < values[0]) {
-            const expanded = clampParams(centroid.map((c, j) => 
-                c + gamma * (reflected[j] - c)
-            ));
+            const expanded = clampParams(centroid.map((c, j) => c + gamma * (reflected[j] - c)));
             const expandedValue = objective(expanded);
             
             if (expandedValue < reflectedValue) {
@@ -213,10 +225,7 @@ const nelderMeadMultiDim = (objective, initial, options = {}) => {
             continue;
         }
         
-        // Contraction
-        const contracted = clampParams(centroid.map((c, j) => 
-            c + rho * (simplex[n][j] - c)
-        ));
+        const contracted = clampParams(centroid.map((c, j) => c + rho * (simplex[n][j] - c)));
         const contractedValue = objective(contracted);
         
         if (contractedValue < values[n]) {
@@ -225,7 +234,6 @@ const nelderMeadMultiDim = (objective, initial, options = {}) => {
             continue;
         }
         
-        // Shrink
         for (let i = 1; i <= n; i++) {
             for (let j = 0; j < n; j++) {
                 simplex[i][j] = simplex[0][j] + sigma * (simplex[i][j] - simplex[0][j]);
@@ -239,56 +247,67 @@ const nelderMeadMultiDim = (objective, initial, options = {}) => {
     return { solution: simplex[bestIdx], value: values[bestIdx] };
 };
 
-/**
- * Generate a random perturbation of a solution
- */
-const perturbSolution = (solution, strength = 0.3, opacityBounds) => {
+const perturbSolution = (solution, strength = 0.3, paramConfigs) => {
     return solution.map((v, idx) => {
-        let val = v + (Math.random() - 0.5) * 2 * strength;
-        if ((idx + 1) % 4 === 0) {
-            return clamp(val, opacityBounds.min, opacityBounds.max);
-        }
-        return clamp(val, 0, 1);
+        const config = paramConfigs[idx] || { min: 0, max: 1 };
+        const val = v + (Math.random() - 0.5) * 2 * strength;
+        return clamp(val, config.min, config.max);
     });
 };
 
-/**
- * Generate a random initial solution (RGBA/HSLA)
- */
-const randomSolution = (dims, opacityBounds) => {
+const randomSolution = (dims, paramConfigs) => {
     return Array(dims).fill(0).map((_, idx) => {
-        if ((idx + 1) % 4 === 0) {
-            return opacityBounds.min + Math.random() * (opacityBounds.max - opacityBounds.min);
-        }
-        return Math.random();
+        const config = paramConfigs[idx] || { min: 0, max: 1 };
+        return config.min + Math.random() * (config.max - config.min);
     });
 };
 
 /**
- * Joint optimization with multiple restarts and basin hopping
- * Handles RGBA/HSLA optimization (4 params per step)
+ * Joint optimization with variable dimensions per step
  */
 const jointOptimizeModeSequenceEnhanced = (pairs, modeSequence, initialBlends = null, numRestarts = 5, basinHops = 3, minOpacity = 0.1, maxOpacity = 1.0) => {
     const validPairs = pairs.filter(p => p.source && p.target);
     if (validPairs.length === 0) return null;
     
-    const numSteps = modeSequence.length;
-    const dims = numSteps * 4; // R/H, G/S, B/L, A per step
-    const opacityBounds = { min: minOpacity, max: maxOpacity };
+    // 1. Determine dimensions and bounds
+    const stepConfigs = []; // { paramCount, startIndex }
+    const paramConfigs = []; // flattened bounds
     
-    // Objective function
+    let currentIdx = 0;
+    for (const mode of modeSequence) {
+        const paramCount = getModeParamCount(mode);
+        stepConfigs.push({ paramCount, startIndex: currentIdx });
+        
+        // Add parameter bounds
+        for (let i = 0; i < paramCount; i++) {
+            paramConfigs.push({ min: 0, max: 1 });
+        }
+        // Add opacity bound
+        paramConfigs.push({ min: minOpacity, max: maxOpacity });
+        
+        currentIdx += paramCount + 1; // +1 for opacity
+    }
+    
+    const totalDims = currentIdx;
+    
+    // 2. Objective function
     const objective = (flatParams) => {
         const steps = [];
-        for (let i = 0; i < numSteps; i++) {
-            const baseIdx = i * 4;
+        for (let i = 0; i < modeSequence.length; i++) {
+            const config = stepConfigs[i];
+            const mode = modeSequence[i];
+            const base = config.startIndex;
+            
+            const blend = [];
+            for (let j = 0; j < config.paramCount; j++) {
+                blend.push(flatParams[base + j]);
+            }
+            const opacity = flatParams[base + config.paramCount];
+            
             steps.push({
-                modeName: modeSequence[i],
-                blend: [
-                    flatParams[baseIdx],
-                    flatParams[baseIdx + 1],
-                    flatParams[baseIdx + 2]
-                ],
-                opacity: flatParams[baseIdx + 3]
+                modeName: mode,
+                blend,
+                opacity
             });
         }
         const result = computeMultiStepError(validPairs, steps);
@@ -298,44 +317,45 @@ const jointOptimizeModeSequenceEnhanced = (pairs, modeSequence, initialBlends = 
     let globalBest = null;
     let globalBestValue = Infinity;
     
-    // Try multiple starting points
+    // 3. Optimization Loop
     for (let restart = 0; restart < numRestarts; restart++) {
-        // Generate initial point
-        let initial;
-        if (restart === 0 && initialBlends && initialBlends.length === numSteps) {
-            // First restart uses provided initial blends + maxOpacity
-            initial = [];
-            for (const blend of initialBlends) {
+        let initial = [];
+        
+        if (restart === 0 && initialBlends && initialBlends.length === modeSequence.length) {
+            // Use provided initial guess
+            for (let i = 0; i < modeSequence.length; i++) {
+                const blend = initialBlends[i];
                 initial.push(...blend);
-                initial.push(maxOpacity); 
+                initial.push(maxOpacity);
             }
         } else if (restart === 1) {
-            // Second restart uses gray/neutral + maxOpacity
-            initial = [];
-            for(let i=0; i<numSteps; i++) {
-                initial.push(0.5, 0.5, 0.5, maxOpacity);
+            // Neutral guess
+            for (let i = 0; i < modeSequence.length; i++) {
+                const count = stepConfigs[i].paramCount;
+                for (let k = 0; k < count; k++) initial.push(0.5);
+                initial.push(maxOpacity);
             }
         } else {
-            // Random restarts
-            initial = randomSolution(dims, opacityBounds);
+            // Random guess
+            initial = randomSolution(totalDims, paramConfigs);
         }
         
-        // Run Nelder-Mead from this starting point
+        // Nelder-Mead
         let { solution, value } = nelderMeadMultiDim(objective, initial, {
             maxIterations: 400,
             tolerance: 1e-8,
             initialStep: 0.25,
-            opacityBounds
+            paramConfigs
         });
         
-        // Basin hopping: perturb and re-optimize
+        // Basin Hopping
         for (let hop = 0; hop < basinHops; hop++) {
-            const perturbed = perturbSolution(solution, 0.2 + hop * 0.1, opacityBounds);
+            const perturbed = perturbSolution(solution, 0.2 + hop * 0.1, paramConfigs);
             const hopResult = nelderMeadMultiDim(objective, perturbed, {
                 maxIterations: 300,
                 tolerance: 1e-7,
                 initialStep: 0.15,
-                opacityBounds
+                paramConfigs
             });
             
             if (hopResult.value < value) {
@@ -350,30 +370,43 @@ const jointOptimizeModeSequenceEnhanced = (pairs, modeSequence, initialBlends = 
         }
     }
     
-    // Build final steps from global best
+    // 4. Construct Result
     const steps = [];
-    for (let i = 0; i < numSteps; i++) {
-        const baseIdx = i * 4;
-        const blend = [
-            clamp(globalBest[baseIdx], 0, 1),
-            clamp(globalBest[baseIdx + 1], 0, 1),
-            clamp(globalBest[baseIdx + 2], 0, 1)
-        ];
-        const opacity = clamp(globalBest[baseIdx + 3], minOpacity, maxOpacity);
+    for (let i = 0; i < modeSequence.length; i++) {
+        const config = stepConfigs[i];
+        const mode = modeSequence[i];
+        const base = config.startIndex;
         
-        const step = {
-            modeName: modeSequence[i],
-            blend,
-            opacity
-        };
+        const blend = [];
+        for (let j = 0; j < config.paramCount; j++) {
+            blend.push(clamp(globalBest[base + j], 0, 1));
+        }
+        const opacity = clamp(globalBest[base + config.paramCount], minOpacity, maxOpacity);
+        
+        const step = { modeName: mode, blend, opacity };
 
-        // Determine display values based on mode
-        if (modeSequence[i] === HSL_MODE_NAME) {
+        if (mode === HSL_MODE_NAME) {
             const h = Math.round((blend[0] * 360) - 180);
             const s = Math.round((blend[1] * 200) - 100);
             const l = Math.round((blend[2] * 200) - 100);
             step.hslValues = { h, s, l };
-            step.blendHex = "#HSL"; // Placeholder
+            step.blendHex = "#HSL";
+        } else if (mode === LEVELS_MODE_NAME) {
+            // Re-apply constraints for final display object
+            let ib = Math.round(blend[0] * 255);
+            let iw = Math.round(blend[1] * 255);
+            ib = Math.min(253, Math.max(0, ib));
+            iw = Math.max(ib + 2, Math.min(255, iw));
+            
+            const levels = {
+                inputBlack: ib,
+                inputWhite: iw,
+                inputGamma: parseFloat(Math.max(0.1, Math.min(9.99, blend[2] * 9.89 + 0.1)).toFixed(2)),
+                outputBlack: Math.round(blend[3] * 255),
+                outputWhite: Math.round(blend[4] * 255)
+            };
+            step.levelsValues = levels;
+            step.blendHex = "#LVL";
         } else {
             const blendRgb = blend.map(c => Math.round(c * 255));
             step.blendHex = rgbToHex(...blendRgb);
@@ -384,61 +417,38 @@ const jointOptimizeModeSequenceEnhanced = (pairs, modeSequence, initialBlends = 
     
     const result = computeMultiStepError(validPairs, steps);
     
-    // Add stepError to each step (calculated as weighted average now)
-    let currentColors = validPairs.map(p => {
-        const rgb = hexToRgb(p.source);
-        return rgb.map(c => c / 255);
-    });
-    
-    // Calculate total weight for normalization
-    let totalWeight = 0;
-    validPairs.forEach(p => {
-        totalWeight += (p.weight !== undefined ? p.weight : 1);
-    });
+    // Calculate per-step error contribution (weighted)
+    let currentColors = validPairs.map(p => hexToRgb(p.source).map(c => c / 255));
+    let totalWeight = validPairs.reduce((sum, p) => sum + (p.weight !== undefined ? p.weight : 1), 0);
 
     for (let i = 0; i < steps.length; i++) {
-        currentColors = currentColors.map(c => 
-            applyBlendNorm(steps[i].modeName, c, steps[i].blend, steps[i].opacity)
-        );
+        currentColors = currentColors.map(c => applyBlendNorm(steps[i].modeName, c, steps[i].blend, steps[i].opacity));
         
         let stepWeightedError = 0;
-        const targetColors = validPairs.map(p => hexToRgb(p.target));
-        
-        for (let j = 0; j < currentColors.length; j++) {
-            const achievedRgb = currentColors[j].map(c => Math.round(c * 255));
-            const targetRgb = targetColors[j];
-            const achievedLab = rgbToLab(...achievedRgb);
-            const targetLab = rgbToLab(...targetRgb);
-            const weight = validPairs[j].weight !== undefined ? validPairs[j].weight : 1;
-            
-            stepWeightedError += deltaE(targetLab, achievedLab) * weight;
-        }
+        validPairs.forEach((p, idx) => {
+            const achievedRgb = currentColors[idx].map(c => Math.round(c * 255));
+            const targetRgb = hexToRgb(p.target);
+            const weight = p.weight !== undefined ? p.weight : 1;
+            stepWeightedError += deltaE(rgbToLab(...targetRgb), rgbToLab(...achievedRgb)) * weight;
+        });
         
         steps[i].stepError = totalWeight > 0 ? stepWeightedError / totalWeight : 0;
     }
     
-    return {
-        steps,
-        modeSequence,
-        ...result
-    };
+    return { steps, modeSequence, ...result };
 };
 
-/**
- * Generate all possible mode sequences of given length
- */
-const generateModeSequences = (numSteps, maxSequences = 300, allowHsl = false) => {
+const generateModeSequences = (numSteps, maxSequences = 300, allowHsl = false, allowLevels = false) => {
     const modeNames = blendModes.map(m => m.name);
     if (allowHsl) modeNames.push(HSL_MODE_NAME);
-    const numModes = modeNames.length;
+    if (allowLevels) modeNames.push(LEVELS_MODE_NAME);
     
-    if (numSteps === 1) {
-        return modeNames.map(m => [m]);
-    }
+    const numModes = modeNames.length;
+    if (numSteps === 1) return modeNames.map(m => [m]);
     
     const sequences = [];
     
-    // For small numSteps, enumerate all
+    // Small step count: exhaustive
     if (Math.pow(numModes, numSteps) <= maxSequences) {
         const generate = (current) => {
             if (current.length === numSteps) {
@@ -453,72 +463,42 @@ const generateModeSequences = (numSteps, maxSequences = 300, allowHsl = false) =
         };
         generate([]);
     } else {
-        // For larger numSteps, use random sampling with diversity
+        // Random sampling with heuristic priority
         const used = new Set();
         
-        // Add some structured sequences (same mode repeated)
+        // 1. Uniform sequences
         for (const mode of modeNames) {
             const seq = Array(numSteps).fill(mode);
             const key = seq.join('|');
-            if (!used.has(key)) {
-                used.add(key);
-                sequences.push(seq);
-            }
+            if (!used.has(key)) { used.add(key); sequences.push(seq); }
         }
         
-        // Add pairwise combinations for first two steps
-        for (const mode1 of modeNames) {
-            for (const mode2 of modeNames) {
-                if (sequences.length >= maxSequences) break;
-                const seq = [mode1, mode2];
-                while (seq.length < numSteps) {
-                    seq.push(modeNames[Math.floor(Math.random() * numModes)]);
-                }
-                const key = seq.join('|');
-                if (!used.has(key)) {
-                    used.add(key);
-                    sequences.push(seq);
-                }
-            }
-        }
-        
-        // Add random sequences to fill up
+        // 2. Random sequences
         while (sequences.length < maxSequences) {
             const seq = [];
             for (let i = 0; i < numSteps; i++) {
                 seq.push(modeNames[Math.floor(Math.random() * numModes)]);
             }
             const key = seq.join('|');
-            if (!used.has(key)) {
-                used.add(key);
-                sequences.push(seq);
-            }
+            if (!used.has(key)) { used.add(key); sequences.push(seq); }
         }
     }
     
     return sequences;
 };
 
-/**
- * Greedy search to find promising mode sequences
- */
-const greedySearchSequences = (pairs, numSteps, numTrials = 30, minOpacity = 0.1, maxOpacity = 1.0, allowHsl = false) => {
+const greedySearchSequences = (pairs, numSteps, numTrials = 30, minOpacity = 0.1, maxOpacity = 1.0, allowHsl = false, allowLevels = false) => {
     const validPairs = pairs.filter(p => p.source && p.target);
     if (validPairs.length === 0) return [];
     
     const candidates = [];
     const modeNames = blendModes.map(m => m.name);
     if (allowHsl) modeNames.push(HSL_MODE_NAME);
+    if (allowLevels) modeNames.push(LEVELS_MODE_NAME);
     
-    // Run multiple greedy trials with different starting points and randomization
     for (let trial = 0; trial < numTrials; trial++) {
         const steps = [];
-        let currentColors = validPairs.map(p => {
-            const rgb = hexToRgb(p.source);
-            return rgb.map(c => c / 255);
-        });
-        
-        // Track error properly
+        let currentColors = validPairs.map(p => hexToRgb(p.source).map(c => c / 255));
         let finalError = Infinity;
 
         for (let stepIdx = 0; stepIdx < numSteps; stepIdx++) {
@@ -526,20 +506,18 @@ const greedySearchSequences = (pairs, numSteps, numTrials = 30, minOpacity = 0.1
             let bestBlend = null;
             let bestStepError = Infinity;
             
-            // Shuffle modes for diversity in later trials
-            const shuffledModes = trial === 0 
-                ? modeNames 
-                : [...modeNames].sort(() => Math.random() - 0.5);
+            // Randomize mode order for diversity
+            const modesToTry = trial === 0 ? modeNames : [...modeNames].sort(() => Math.random() - 0.5);
             
-            // For some trials, only consider top-k modes to encourage diversity
-            const modesToTry = trial > numTrials / 2 
-                ? shuffledModes.slice(0, Math.max(5, Math.floor(modeNames.length / 2)))
-                : shuffledModes;
+            // In later trials, limit to subset to speed up
+            const limit = trial > numTrials / 2 ? Math.max(5, Math.floor(modeNames.length / 2)) : modeNames.length;
             
-            for (const modeName of modesToTry) {
-                // Create virtual pairs from current state to original targets
-                const virtualPairs = validPairs.map((p, i) => ({
-                    source: rgbToHex(...currentColors[i].map(c => Math.round(c * 255))),
+            for (let i = 0; i < limit; i++) {
+                const modeName = modesToTry[i];
+                
+                // Virtual pairs for this step
+                const virtualPairs = validPairs.map((p, idx) => ({
+                    source: rgbToHex(...currentColors[idx].map(c => Math.round(c * 255))),
                     target: p.target,
                     weight: p.weight !== undefined ? p.weight : 1
                 }));
@@ -547,41 +525,31 @@ const greedySearchSequences = (pairs, numSteps, numTrials = 30, minOpacity = 0.1
                 let result;
                 
                 if (modeName === HSL_MODE_NAME) {
-                     // Optimize HSL Step (3 params)
-                     // Reusing Nelder-Mead for HSL params 0-1
-                     const objective = (blendNorm) => {
-                         // computeBlendError doesn't support HSL directly, use applyBlendNorm logic manual check
-                         // Actually, let's create a mini helper since we don't have optimizeHslStep exposed globally easily
-                         let totalWError = 0;
-                         let tW = 0;
-                         
-                         const h = (blendNorm[0] * 360) - 180;
-                         const s = (blendNorm[1] * 200) - 100;
-                         const l = (blendNorm[2] * 200) - 100;
-
-                         for (const vp of virtualPairs) {
-                             const sRgb = hexToRgb(vp.source);
-                             const tRgb = hexToRgb(vp.target);
-                             if (!sRgb || !tRgb) continue;
-                             
-                             const weight = vp.weight;
-                             const resRgb = applyHslAdjustment(sRgb, h, s, l);
-                             const err = deltaE(rgbToLab(...tRgb), rgbToLab(...resRgb));
-                             totalWError += err * weight;
-                             tW += weight;
-                         }
-                         return tW > 0 ? totalWError : Infinity;
-                     };
-
-                     const initial = [0.5, 0.5, 0.5]; // Neutral
-                     const optimized = nelderMead(objective, initial, { maxIterations: 100 });
-                     
-                     // Compute final error
-                     const finalErr = objective(optimized) / (virtualPairs.reduce((acc,p)=>acc+(p.weight||1), 0) || 1);
-                     
-                     result = { blend: optimized, avgError: finalErr };
-
-                } else {
+                    const objective = (blendNorm) => {
+                        // Reuse applyBlendNorm for error calc
+                        const tempStep = { modeName, blend: blendNorm, opacity: 1 }; // Assume max opacity for greedy
+                        const res = computeMultiStepError(virtualPairs, [tempStep]);
+                        return res.totalError;
+                    };
+                    const optimized = nelderMead(objective, [0.5, 0.5, 0.5], { maxIterations: 80 }); // Reuse 3D NM for HSL
+                    const totalW = virtualPairs.reduce((acc,p)=>acc+(p.weight||1), 0) || 1;
+                    result = { blend: optimized, avgError: objective(optimized) / totalW };
+                } 
+                else if (modeName === LEVELS_MODE_NAME) {
+                    const objective = (blendNorm) => {
+                        const tempStep = { modeName, blend: blendNorm, opacity: 1 };
+                        const res = computeMultiStepError(virtualPairs, [tempStep]);
+                        return res.totalError;
+                    };
+                    // Use 5D optimization for Levels
+                    const initial = [0, 1, 0.1, 0, 1]; // Default mapping: Black=0, White=255, G=1.0, etc
+                    // Mapping logic in applyBlendNorm uses: g = p*9.89+0.1. So 1.0 gamma is approx p=0.09. Let's start neutral.
+                    // Start: InB=0(0), InW=1(255), Gam=~0.09(1.0), OutB=0(0), OutW=1(255)
+                    const optimized = nelderMeadMultiDim(objective, [0, 1, 0.09, 0, 1], { maxIterations: 100 }).solution;
+                    const totalW = virtualPairs.reduce((acc,p)=>acc+(p.weight||1), 0) || 1;
+                    result = { blend: optimized, avgError: objective(optimized) / totalW };
+                } 
+                else {
                     const mode = blendModes.find(m => m.name === modeName);
                     result = optimizeBlend(mode, virtualPairs);
                 }
@@ -594,295 +562,189 @@ const greedySearchSequences = (pairs, numSteps, numTrials = 30, minOpacity = 0.1
             }
             
             if (bestMode && bestBlend) {
-                // Greedy search assumes max opacity for now
                 steps.push({ modeName: bestMode, blend: bestBlend });
-                currentColors = currentColors.map(c => 
-                    applyBlendNorm(bestMode, c, bestBlend, maxOpacity)
-                );
+                currentColors = currentColors.map(c => applyBlendNorm(bestMode, c, bestBlend, maxOpacity));
                 finalError = bestStepError;
             }
         }
         
         if (steps.length === numSteps) {
             const modeSequence = steps.map(s => s.modeName);
-            // Initialize 4D blends: [p1, p2, p3, maxOpacity]
             const initialBlends = steps.map(s => s.blend);
-            
             candidates.push({ modeSequence, initialBlends, greedyError: finalError });
         }
     }
     
-    // Sort by error and return unique sequences
     candidates.sort((a, b) => a.greedyError - b.greedyError);
-    
-    const uniqueCandidates = [];
+    const unique = [];
     const seen = new Set();
     for (const c of candidates) {
         const key = c.modeSequence.join('|');
-        if (!seen.has(key)) {
-            seen.add(key);
-            uniqueCandidates.push(c);
-        }
+        if (!seen.has(key)) { seen.add(key); unique.push(c); }
     }
-    
-    return uniqueCandidates;
+    return unique;
 };
 
 /**
  * Async multi-step optimizer with cancellation and progress reporting
- * Uses enhanced optimization with multiple restarts and basin hopping
  */
 class MultiStepOptimizerAsync {
     constructor() {
         this.cancelled = false;
         this.bestResult = null;
         this.topSolutions = [];
-        this.onProgress = null;
-        this.onBestFound = null;
     }
     
-    cancel() {
-        this.cancelled = true;
-    }
-    
-    async sleep(ms = 0) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+    cancel() { this.cancelled = true; }
+    async sleep(ms = 0) { return new Promise(resolve => setTimeout(resolve, ms)); }
     
     async optimize(pairs, numSteps, options = {}) {
         this.cancelled = false;
-        // Keep existing best result if provided (for re-runs)
         this.bestResult = options.existingBest || null;
         this.topSolutions = options.existingBest ? [options.existingBest] : [];
-        this.onProgress = options.onProgress || null;
-        this.onBestFound = options.onBestFound || null;
+        this.onProgress = options.onProgress;
+        this.onBestFound = options.onBestFound;
         
         const minOpacity = (options.minOpacity || 10) / 100;
         const maxOpacity = (options.maxOpacity || 100) / 100;
         const allowHsl = options.allowHsl || false;
-        
-        // Extensive mode uses 5x more resources
+        const allowLevels = options.allowLevels || false;
         const extensive = options.extensive || false;
-        const greedyTrials = extensive ? 200 : 40;
-        const maxSequences = extensive ? 1000 : 250;
-        const numRestartsBase = extensive ? 8 : 3;
-        const numRestartsNoInit = extensive ? 15 : 5;
-        const basinHopsCount = extensive ? 5 : 2;
+        
+        const greedyTrials = extensive ? 100 : 30;
+        const maxSequences = extensive ? 600 : 200;
+        const numRestartsBase = extensive ? 5 : 2;
+        const basinHopsCount = extensive ? 4 : 1;
         
         const validPairs = pairs.filter(p => p.source && p.target);
         if (validPairs.length === 0) return null;
         
-        // Phase 0: Find best single-mode result for comparison
-        if (this.onProgress) {
-            this.onProgress({ phase: 'single', message: 'Finding best single-mode solution...' });
-        }
+        // Phase 0: Single Best
+        if (this.onProgress) this.onProgress({ phase: 'single', message: 'Finding best single-mode solution...' });
         
         let singleBestMode = null;
         let singleBestError = Infinity;
-        
         for (const mode of blendModes) {
             if (this.cancelled) return this.bestResult;
-            
             const result = optimizeBlend(mode, validPairs);
             if (result && result.avgError < singleBestError) {
                 singleBestError = result.avgError;
                 singleBestMode = mode.name;
             }
         }
+        await this.sleep();
         
-        await this.sleep(0);
+        // Phase 1: Greedy Search
+        if (this.onProgress) this.onProgress({ phase: 'greedy', message: 'Running greedy search...' });
+        const greedyCandidates = greedySearchSequences(validPairs, numSteps, greedyTrials, minOpacity, maxOpacity, allowHsl, allowLevels);
+        await this.sleep();
         
-        if (this.cancelled) return this.bestResult;
+        // Phase 2: Enumeration
+        if (this.onProgress) this.onProgress({ phase: 'generating', message: 'Generating sequences...' });
+        const enumerated = generateModeSequences(numSteps, maxSequences, allowHsl, allowLevels);
         
-        // Phase 1: Generate candidate sequences via greedy search
-        if (this.onProgress) {
-            const modeLabel = extensive ? 'Running EXTENSIVE greedy search...' : 'Running greedy search for promising sequences...';
-            this.onProgress({ phase: 'greedy', message: modeLabel });
-        }
-        
-        // Get greedy candidates (more trials for better coverage)
-        const greedyCandidates = greedySearchSequences(validPairs, numSteps, greedyTrials, minOpacity, maxOpacity, allowHsl);
-        
-        await this.sleep(0);
-        
-        if (this.cancelled) return this.bestResult;
-        
-        // Phase 2: Generate additional random/enumerated candidates
-        if (this.onProgress) {
-            this.onProgress({ phase: 'generating', message: 'Generating additional candidate sequences...' });
-        }
-        
-        const enumeratedSequences = generateModeSequences(numSteps, maxSequences, allowHsl);
-        
-        // Combine greedy (prioritized) and enumerated candidates
         const allCandidates = [];
-        const seenSequences = new Set();
+        const seen = new Set();
         
-        // Add greedy candidates first (they have good initial guesses)
-        for (const gc of greedyCandidates) {
-            const key = gc.modeSequence.join('|');
-            if (!seenSequences.has(key)) {
-                seenSequences.add(key);
-                allCandidates.push(gc);
-            }
-        }
+        [...greedyCandidates, ...enumerated.map(seq => ({ modeSequence: seq, initialBlends: null }))].forEach(c => {
+            const key = c.modeSequence.join('|');
+            if (!seen.has(key)) { seen.add(key); allCandidates.push(c); }
+        });
         
-        // Add enumerated sequences
-        for (const seq of enumeratedSequences) {
-            const key = seq.join('|');
-            if (!seenSequences.has(key)) {
-                seenSequences.add(key);
-                allCandidates.push({ modeSequence: seq, initialBlends: null, greedyError: null });
-            }
-        }
+        await this.sleep();
         
-        await this.sleep(0);
-        
-        if (this.cancelled) return this.bestResult;
-        
-        // Phase 3: Optimize each candidate with enhanced algorithm
-        const totalCandidates = allCandidates.length;
+        // Phase 3: Optimization
+        const total = allCandidates.length;
         let evaluated = 0;
         
         for (const candidate of allCandidates) {
             if (this.cancelled) return this.bestResult;
-            
             evaluated++;
             
             if (this.onProgress) {
-                const modeLabel = extensive ? '[EXTENSIVE] ' : '';
                 this.onProgress({
                     phase: 'optimizing',
                     current: evaluated,
-                    total: totalCandidates,
-                    message: `${modeLabel}Optimizing ${evaluated}/${totalCandidates}: ${candidate.modeSequence.join(' → ')}`,
+                    total,
+                    message: `Optimizing ${evaluated}/${total}: ${candidate.modeSequence.join(' → ')}`,
                     currentSequence: candidate.modeSequence
                 });
             }
             
             try {
-                // Use enhanced optimization with restarts and basin hopping
-                // More restarts for candidates without initial guesses
-                const numRestarts = candidate.initialBlends ? numRestartsBase : numRestartsNoInit;
-                
                 const result = jointOptimizeModeSequenceEnhanced(
-                    validPairs,
-                    candidate.modeSequence,
-                    candidate.initialBlends,
-                    numRestarts,
-                    basinHopsCount,
-                    minOpacity,
+                    validPairs, 
+                    candidate.modeSequence, 
+                    candidate.initialBlends, 
+                    candidate.initialBlends ? numRestartsBase : numRestartsBase + 2, 
+                    basinHopsCount, 
+                    minOpacity, 
                     maxOpacity
                 );
                 
                 if (result) {
-                    // Calculate improvement
-                    const improvement = singleBestError > 0 
-                        ? ((singleBestError - result.avgError) / singleBestError) * 100 
-                        : 0;
+                    const improvement = singleBestError > 0 ? ((singleBestError - result.avgError) / singleBestError) * 100 : 0;
+                    const metaResult = { ...result, singleBestMode, singleBestError, improvement: Math.max(0, improvement) };
                     
-                    const resultWithMeta = {
-                        ...result,
-                        singleBestMode,
-                        singleBestError,
-                        improvement: Math.max(0, improvement)
-                    };
-
-                    // Update top solutions list
-                    this.updateTopSolutions(resultWithMeta);
-
-                    // Update best result reference
-                    if (!this.bestResult || resultWithMeta.avgError < this.bestResult.avgError) {
-                        this.bestResult = resultWithMeta;
+                    this.updateTopSolutions(metaResult);
+                    if (!this.bestResult || metaResult.avgError < this.bestResult.avgError) {
+                        this.bestResult = metaResult;
                     }
-                    
-                    // Notify UI with updated list
-                    if (this.onBestFound) {
-                        this.onBestFound(this.topSolutions);
-                    }
+                    if (this.onBestFound) this.onBestFound(this.topSolutions);
                 }
             } catch (e) {
-                console.error('Error optimizing sequence:', candidate.modeSequence, e);
+                console.error(e);
             }
             
-            // Yield to UI every few iterations
-            if (evaluated % 2 === 0) {
-                await this.sleep(0);
-            }
+            if (evaluated % 3 === 0) await this.sleep();
         }
         
-        if (this.onProgress) {
-            this.onProgress({ phase: 'done', message: 'Optimization complete!' });
-        }
-        
+        if (this.onProgress) this.onProgress({ phase: 'done', message: 'Optimization complete!' });
         return this.topSolutions;
     }
-
-    // Helper to maintain top solutions list
+    
     updateTopSolutions(newResult) {
-        const MAX_SOLUTIONS = 6;
+        const MAX = 6;
         const all = [...this.topSolutions];
-        
-        // Check if this sequence already exists
-        const seqKey = newResult.steps.map(s => {
-            if (s.hslValues) return `${s.modeName}:${s.hslValues.h},${s.hslValues.s},${s.hslValues.l}`;
-            return s.modeName + ':' + s.blendHex;
+        const getKey = (res) => res.steps.map(s => {
+            if (s.hslValues) return `HSL:${s.hslValues.h},${s.hslValues.s},${s.hslValues.l}`;
+            if (s.levelsValues) return `LVL:${s.levelsValues.inputGamma}`;
+            return `${s.modeName}:${s.blendHex}`;
         }).join('|');
-
-        const existingIdx = all.findIndex(s => {
-             const key = s.steps.map(st => {
-                 if (st.hslValues) return `${st.modeName}:${st.hslValues.h},${st.hslValues.s},${st.hslValues.l}`;
-                 return st.modeName + ':' + st.blendHex;
-             }).join('|');
-             return key === seqKey;
-        });
         
-        if (existingIdx >= 0) {
-            // Replace if better
-            if (newResult.avgError < all[existingIdx].avgError) {
-                all[existingIdx] = newResult;
-            }
+        const seqKey = getKey(newResult);
+        const idx = all.findIndex(s => getKey(s) === seqKey);
+        
+        if (idx >= 0) {
+            if (newResult.avgError < all[idx].avgError) all[idx] = newResult;
         } else {
             all.push(newResult);
         }
         
-        // Sort by avgError and keep top N
         all.sort((a, b) => a.avgError - b.avgError);
-        this.topSolutions = all.slice(0, MAX_SOLUTIONS);
+        this.topSolutions = all.slice(0, MAX);
     }
 }
 
-// Global optimizer instance
 let currentOptimizer = null;
 
-/**
- * Start async multi-step optimization
- */
 const startMultiStepOptimization = async (pairs, numSteps, callbacks = {}, options = {}) => {
-    // Cancel any existing optimization
-    if (currentOptimizer) {
-        currentOptimizer.cancel();
-    }
-    
+    if (currentOptimizer) currentOptimizer.cancel();
     currentOptimizer = new MultiStepOptimizerAsync();
-    
     const result = await currentOptimizer.optimize(pairs, numSteps, {
         onProgress: callbacks.onProgress,
         onBestFound: callbacks.onBestFound,
-        existingBest: options.existingBest || null,
-        extensive: options.extensive || false,
+        existingBest: options.existingBest,
+        extensive: options.extensive,
         minOpacity: options.minOpacity,
         maxOpacity: options.maxOpacity,
-        allowHsl: options.allowHsl
+        allowHsl: options.allowHsl,
+        allowLevels: options.allowLevels
     });
-    
     currentOptimizer = null;
     return result;
 };
 
-/**
- * Cancel ongoing optimization
- */
 const cancelMultiStepOptimization = () => {
     if (currentOptimizer) {
         currentOptimizer.cancel();
@@ -890,11 +752,4 @@ const cancelMultiStepOptimization = () => {
         return true;
     }
     return false;
-};
-
-/**
- * Check if optimization is running
- */
-const isOptimizationRunning = () => {
-    return currentOptimizer !== null;
 };

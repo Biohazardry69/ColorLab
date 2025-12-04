@@ -310,3 +310,56 @@ const applyHslAdjustment = (rgb, hueShift, satAdj, lightAdj) => {
     // Return clamped RGB
     return [clamp(r), clamp(g), clamp(b)];
 };
+
+/**
+ * Calculates the output pixel value based on the Levels adjustment parameters.
+ * Logic matches Photoshop's Levels tool.
+ */
+function calculateLevel(pixelValue, params) {
+  const { 
+    inputBlack = 0, 
+    inputWhite = 255, 
+    inputGamma = 1.0, 
+    outputBlack = 0, 
+    outputWhite = 255 
+  } = params;
+
+  // 1. Normalize Input to 0..1 based on Input Black/White
+  let val = pixelValue / 255;
+  const range = (inputWhite - inputBlack) / 255;
+  
+  if (range === 0) {
+    // Edge case: Input Black equals Input White.
+    // Behaves as a hard threshold.
+    val = val < (inputBlack / 255) ? 0 : 1;
+  } else {
+    val = (val - (inputBlack / 255)) / range;
+  }
+  
+  // Clamp to 0..1 before Gamma to avoid NaN or invalid math
+  val = Math.max(0, Math.min(1, val));
+
+  // 2. Apply Gamma Correction
+  // Formula: value ^ (1 / gamma)
+  if (inputGamma !== 1 && inputGamma > 0) {
+    val = Math.pow(val, 1 / inputGamma);
+  }
+
+  // 3. Map to Output Range
+  const outRange = (outputWhite - outputBlack) / 255;
+  val = val * outRange + (outputBlack / 255);
+
+  // 4. Denormalize to 0..255 and round
+  return Math.max(0, Math.min(255, Math.round(val * 255)));
+}
+
+/**
+ * Apply levels adjustment to an RGB array
+ */
+const applyLevelsAdjustment = (rgb, params) => {
+    return [
+        calculateLevel(rgb[0], params),
+        calculateLevel(rgb[1], params),
+        calculateLevel(rgb[2], params)
+    ];
+};

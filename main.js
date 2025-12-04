@@ -6,6 +6,10 @@
 
 
 
+
+
+
+
 // Main app initialization and event wiring
 
 // Track if we've done an initial run (to show re-run button) - declared early for debounce access
@@ -128,6 +132,14 @@ renderGlobalHistory();
 
 // Initial calculation
 updateCalculations();
+
+// Also update Levels Tool initially if pairs exist
+if (getValidPairs().length > 0 && typeof optimizeLevels === 'function') {
+    const levelsResult = optimizeLevels(getValidPairs());
+    renderLevelsResult(levelsResult);
+} else if (typeof renderLevelsResult === 'function') {
+    renderLevelsResult(null);
+}
 
 // EyeDropper instance (if supported)
 let eyeDropper = null;
@@ -365,6 +377,7 @@ const numStepsInput = document.getElementById('num-steps');
 const computeBtn = document.getElementById('compute-multistep');
 const multistepResultContainer = document.getElementById('multistep-result');
 const allowHslInput = document.getElementById('allow-hsl');
+const allowLevelsInput = document.getElementById('allow-levels');
 
 // Reset state when number of steps changes
 numStepsInput.addEventListener('change', () => {
@@ -403,6 +416,12 @@ allowHslInput.addEventListener('change', () => {
     }
 });
 
+allowLevelsInput.addEventListener('change', () => {
+    if (window.resetMultiStepState) {
+        window.resetMultiStepState();
+    }
+});
+
 // Render initial multi-step placeholder
 renderMultiStepResult(null);
 
@@ -415,12 +434,14 @@ const updateTopSolutions = (newSolutions, existingSolutions = []) => {
         // Check if this sequence already exists
         const seqKey = sol.steps.map(s => {
              if (s.hslValues) return `${s.modeName}:${s.hslValues.h},${s.hslValues.s},${s.hslValues.l}`;
+             if (s.levelsValues) return `${s.modeName}:${s.levelsValues.inputBlack},${s.levelsValues.inputGamma},${s.levelsValues.inputWhite}`;
              return s.modeName + ':' + s.blendHex;
         }).join('|');
 
         const existingIdx = all.findIndex(s => 
              s.steps.map(st => {
                  if (st.hslValues) return `${st.modeName}:${st.hslValues.h},${st.hslValues.s},${st.hslValues.l}`;
+                 if (st.levelsValues) return `${st.modeName}:${st.levelsValues.inputBlack},${st.levelsValues.inputGamma},${st.levelsValues.inputWhite}`;
                  return st.modeName + ':' + st.blendHex;
              }).join('|') === seqKey
         );
@@ -462,6 +483,7 @@ computeBtn.addEventListener('click', async () => {
     const minOpacity = parseInt(minOpacityInput.value) || 10;
     const maxOpacity = parseInt(maxOpacityInput.value) || 100;
     const allowHsl = allowHslInput.checked;
+    const allowLevels = allowLevelsInput.checked;
     
     // Store in state for reference
     multiStepState.numSteps = numSteps;
@@ -501,7 +523,8 @@ computeBtn.addEventListener('click', async () => {
             existingBest: isExtensive && multiStepState.topSolutions.length > 0 ? multiStepState.topSolutions[0] : null,
             minOpacity: minOpacity,
             maxOpacity: maxOpacity,
-            allowHsl: allowHsl
+            allowHsl: allowHsl,
+            allowLevels: allowLevels
         });
         
         if (result) {
@@ -591,6 +614,13 @@ document.body.addEventListener('click', async (e) => {
                         name: `Step ${index + 1}: HSL (${step.hslValues.h > 0 ? '+' : ''}${step.hslValues.h}, ${step.hslValues.s > 0 ? '+' : ''}${step.hslValues.s}, ${step.hslValues.l > 0 ? '+' : ''}${step.hslValues.l})`,
                         opacity: step.opacity
                     };
+                } else if (step.modeName === "Levels" && step.levelsValues) {
+                    return {
+                        modeName: "Levels",
+                        levelsValues: step.levelsValues,
+                        name: `Step ${index + 1}: Levels (${step.levelsValues.inputGamma}G)`,
+                        opacity: step.opacity
+                    };
                 } else {
                     return {
                         hex: step.blendHex,
@@ -657,6 +687,33 @@ document.body.addEventListener('click', async (e) => {
         return;
     }
 
+    // Export button click (Levels Tool)
+    const exportLevelsBtn = e.target.closest('#export-levels-btn');
+    if (exportLevelsBtn) {
+        try {
+            const params = JSON.parse(exportLevelsBtn.dataset.params);
+            const script = generateLevelsScript(params);
+            
+            await navigator.clipboard.writeText(script);
+                
+            // Show feedback
+            const tooltip = exportLevelsBtn.querySelector('.export-tooltip');
+            if (tooltip) {
+                const originalText = tooltip.textContent;
+                tooltip.textContent = 'Copied!';
+                exportLevelsBtn.classList.add('copied');
+                setTimeout(() => {
+                    tooltip.textContent = originalText;
+                    exportLevelsBtn.classList.remove('copied');
+                }, 1500);
+            }
+        } catch (err) {
+            console.error('Failed to copy levels script:', err);
+            alert('Failed to copy script to clipboard.');
+        }
+        return;
+    }
+
     // Preview Button Click (Delegated)
     const previewBtn = e.target.closest('.btn-preview');
     if (previewBtn) {
@@ -683,6 +740,14 @@ document.body.addEventListener('click', async (e) => {
                 sat: parseFloat(previewBtn.dataset.sat),
                 light: parseFloat(previewBtn.dataset.light)
             };
+        }
+        else if (type === 'levels') {
+            try {
+                data = { params: JSON.parse(previewBtn.dataset.params) };
+            } catch(e) {
+                console.error("Invalid levels params", e);
+                return;
+            }
         }
         
         if (typeof openPreview === 'function') {

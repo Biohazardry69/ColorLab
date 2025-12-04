@@ -4,6 +4,10 @@
 
 
 
+
+
+
+
 // UI rendering functions (pickers, history, calculations)
 
 // Check if EyeDropper API is available
@@ -224,13 +228,22 @@ const updateCalculations = () => {
     multiStepState.result = null;
     renderMultiStepResult(null);
     
-    // Update HSL tool
     const validPairs = getValidPairs();
+
+    // Update HSL tool
     if (validPairs.length > 0 && typeof optimizeHsl === 'function') {
         const hslResult = optimizeHsl(validPairs);
         renderHslResult(hslResult);
     } else if (typeof renderHslResult === 'function') {
         renderHslResult(null);
+    }
+
+    // Update Levels tool
+    if (validPairs.length > 0 && typeof optimizeLevels === 'function') {
+        const levelsResult = optimizeLevels(validPairs);
+        renderLevelsResult(levelsResult);
+    } else if (typeof renderLevelsResult === 'function') {
+        renderLevelsResult(null);
     }
 
     // Ensure compute button resets back to "Compute Optimal Chain" on any color change
@@ -418,6 +431,19 @@ const renderStepCard = (step, index, isLast) => {
                 <span>H: <b>${step.hslValues.h > 0 ? '+' : ''}${step.hslValues.h}°</b></span>
                 <span>S: <b>${step.hslValues.s > 0 ? '+' : ''}${step.hslValues.s}</b></span>
                 <span>L: <b>${step.hslValues.l > 0 ? '+' : ''}${step.hslValues.l}</b></span>
+            </div>
+        `;
+    } else if (step.modeName === "Levels" && step.levelsValues) {
+        // Special rendering for Levels
+        const lv = step.levelsValues;
+        blendContent = `
+            <div style="display:flex; flex-direction:column; gap:4px; font-size:0.8rem; background:var(--btn-bg); padding:4px 8px; border-radius:6px; border:1px solid var(--border-color);">
+                <div style="display:flex; gap:8px;">
+                    <span>In: <b>${lv.inputBlack}</b>/<b>${lv.inputGamma}</b>/<b>${lv.inputWhite}</b></span>
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <span>Out: <b>${lv.outputBlack}</b>/<b>${lv.outputWhite}</b></span>
+                </div>
             </div>
         `;
     } else {

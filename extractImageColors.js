@@ -35,7 +35,11 @@ function normalizeWeights(items) {
 }
 
 // 1. K-Means (Standard Average)
-function algoKMeans(pixels, k, totalPixels, seeds = []) {
+function algoKMeans(pixels, k, totalPixels, options = {}) {
+    // Handle backward compatibility or direct array passing
+    const seeds = Array.isArray(options) ? options : (options.seeds || []);
+    const anchorWeight = !Array.isArray(options) ? (options.anchorWeight || 0) : 0;
+
     let centroids = [];
     
     // 1. Initialize with Seeds
@@ -84,6 +88,15 @@ function algoKMeans(pixels, k, totalPixels, seeds = []) {
         }
         
         for (let c = 0; c < k; c++) {
+            // Apply Anchor Weight if this cluster corresponds to a seed
+            // This pulls the centroid heavily towards the seed color
+            if (anchorWeight > 0 && c < seeds.length) {
+                sums[c][0] += seeds[c][0] * anchorWeight;
+                sums[c][1] += seeds[c][1] * anchorWeight;
+                sums[c][2] += seeds[c][2] * anchorWeight;
+                counts[c] += anchorWeight;
+            }
+
             if (counts[c] > 0) {
                 centroids[c] = [Math.round(sums[c][0] / counts[c]), Math.round(sums[c][1] / counts[c]), Math.round(sums[c][2] / counts[c])];
             }
@@ -263,8 +276,8 @@ function extractColors(file, k, algorithm = 'kmeans', options = {}) {
                     break;
                 case 'kmeans':
                 default:
-                    // Pass seeds if available
-                    resultData = algoKMeans(pixels, k, totalPixels, options.seeds);
+                    // Pass full options including seeds and anchorWeight
+                    resultData = algoKMeans(pixels, k, totalPixels, options);
                     break;
             }
 

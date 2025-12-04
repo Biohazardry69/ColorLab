@@ -10,9 +10,14 @@
 
     <!-- External CSS -->
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="components.css" />
+    <link rel="stylesheet" href="pairs.css" />
+    <link rel="stylesheet" href="extractor.css" />
+    <link rel="stylesheet" href="results.css" />
+    <link rel="stylesheet" href="modals.css" />
 </head>
 <body>
-    <a href="https://github.com/Biohazardry69/ColorLab" target="_blank" class="github-btn" title="View on GitHub" aria-label="View on GitHub">
+    <a href="https://github.com/your-username/your-repo" target="_blank" class="github-btn" title="View on GitHub" aria-label="View on GitHub">
         <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
         </svg>
@@ -178,6 +183,7 @@
                 <button class="main-tab active" data-tab="simple">Simple Blend Calculation</button>
                 <button class="main-tab" data-tab="multistep">Advanced Blend Calculation</button>
                 <button class="main-tab" data-tab="hsl">Hue/Saturation Tool</button>
+                <button class="main-tab" data-tab="levels">Levels Tool</button>
             </div>
 
             <!-- Tab 1: Simple -->
@@ -245,9 +251,17 @@
                         <input type="number" id="max-opacity" min="1" max="100" value="100">
                         <span class="control-unit">%</span>
                     </div>
-                    <div class="checkbox-control">
-                        <input type="checkbox" id="allow-hsl">
+                    <div class="control-group">
                         <label for="allow-hsl">Allow Hue/Saturation Tool</label>
+                        <label class="checkbox-input-box" for="allow-hsl">
+                            <input type="checkbox" id="allow-hsl">
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label for="allow-levels">Allow Levels Tool</label>
+                        <label class="checkbox-input-box" for="allow-levels">
+                            <input type="checkbox" id="allow-levels">
+                        </label>
                     </div>
                     <button id="compute-multistep" class="btn-compute">
                         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 18px; height: 18px;">
@@ -268,6 +282,16 @@
                 </p>
                 
                 <div id="hsl-result"></div>
+            </div>
+
+            <!-- Tab 4: Levels Tool -->
+            <div id="tab-levels" class="tab-content" style="margin-bottom: 0; padding: 0; box-shadow: none; border: none; background: transparent;">
+                <h2 class="results-title" style="margin: 0 0 8px 0;">Levels Tool</h2>
+                <p class="results-desc">
+                    Find optimal Input/Output Levels and Gamma settings to transform source colors toward target colors.
+                </p>
+                
+                <div id="levels-result"></div>
             </div>
         </div>
     </div>
@@ -344,6 +368,7 @@
     <script src="optimizer.js"></script>
     <script src="multiStepOptimizer.js"></script>
     <script src="hslTool.js"></script>
+    <script src="levelsTool.js"></script>
     <script src="photopeaExport.js"></script>
     <script src="ui.js"></script>
     <script src="rgbPlot.js"></script>

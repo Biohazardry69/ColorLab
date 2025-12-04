@@ -24,6 +24,32 @@ const getPreviewBlend = (modeName, sNorm, bNorm, opacity) => {
             clamp(opacity * resNorm[1] + (1 - opacity) * sNorm[1], 0, 1),
             clamp(opacity * resNorm[2] + (1 - opacity) * sNorm[2], 0, 1)
         ];
+    } else if (modeName === "Levels") {
+        // Levels mode logic with strict constraint enforcement
+        let inBlack = bNorm[0] * 255;
+        let inWhite = bNorm[1] * 255;
+        
+        // Enforce Input Black < Input White (min diff 2)
+        inBlack = Math.min(253, Math.max(0, inBlack));
+        inWhite = Math.max(inBlack + 2, Math.min(255, inWhite));
+        
+        const params = {
+            inputBlack: inBlack,
+            inputWhite: inWhite,
+            inputGamma: Math.max(0.1, Math.min(9.99, bNorm[2] * 9.89 + 0.1)),
+            outputBlack: bNorm[3] * 255,
+            outputWhite: bNorm[4] * 255
+        };
+        
+        const sRgb = sNorm.map(c => Math.round(c * 255));
+        const resRgb = applyLevelsAdjustment(sRgb, params);
+        const resNorm = resRgb.map(c => c / 255);
+        
+        return [
+            clamp(opacity * resNorm[0] + (1 - opacity) * sNorm[0], 0, 1),
+            clamp(opacity * resNorm[1] + (1 - opacity) * sNorm[1], 0, 1),
+            clamp(opacity * resNorm[2] + (1 - opacity) * sNorm[2], 0, 1)
+        ];
     } else {
         // Standard blend mode logic
         const r = applyBlendChannel(modeName, sNorm[0], bNorm[0]);
@@ -51,7 +77,7 @@ const applyPreviewSequence = (sourceNorm, steps) => {
 
 /**
  * Main entry point to open preview modal
- * @param {string} type - 'simple' | 'multistep' | 'hsl'
+ * @param {string} type - 'simple' | 'multistep' | 'hsl' | 'levels'
  * @param {Object} data - Context data for the preview
  */
 const openPreview = (type, data) => {
@@ -158,6 +184,7 @@ const generatePreviewImage = (sourceImg, canvas, type, data) => {
         // Multi-step: array of steps
         steps = data.steps;
     }
+    // Note: 'levels' type uses a different path logic below
     
     // Process pixels
     const totalPixels = width * height;
@@ -168,18 +195,24 @@ const generatePreviewImage = (sourceImg, canvas, type, data) => {
         // Skip fully transparent pixels
         if (px[idx+3] === 0) continue;
         
-        const sNorm = [
-            px[idx] / 255,
-            px[idx+1] / 255,
-            px[idx+2] / 255
-        ];
-        
-        const resNorm = applyPreviewSequence(sNorm, steps);
-        
-        px[idx] = resNorm[0] * 255;
-        px[idx+1] = resNorm[1] * 255;
-        px[idx+2] = resNorm[2] * 255;
-        // Alpha remains unchanged
+        if (type === 'levels') {
+            // Apply Levels transform
+            px[idx] = calculateLevel(px[idx], data.params);
+            px[idx+1] = calculateLevel(px[idx+1], data.params);
+            px[idx+2] = calculateLevel(px[idx+2], data.params);
+        } else {
+            const sNorm = [
+                px[idx] / 255,
+                px[idx+1] / 255,
+                px[idx+2] / 255
+            ];
+            
+            const resNorm = applyPreviewSequence(sNorm, steps);
+            
+            px[idx] = resNorm[0] * 255;
+            px[idx+1] = resNorm[1] * 255;
+            px[idx+2] = resNorm[2] * 255;
+        }
     }
     
     ctx.putImageData(imgData, 0, 0);
@@ -217,8 +250,15 @@ const renderPreviewSwatches = (type, data) => {
         const sNorm = sRgb.map(c => c / 255);
         
         // Calculate result
-        const resNorm = applyPreviewSequence(sNorm, steps);
-        const resHex = rgbToHex(...resNorm.map(c => Math.round(c * 255)));
+        let resRgb;
+        if (type === 'levels') {
+            resRgb = applyLevelsAdjustment(sRgb, data.params);
+        } else {
+            const resNorm = applyPreviewSequence(sNorm, steps);
+            resRgb = resNorm.map(c => Math.round(c * 255));
+        }
+        
+        const resHex = rgbToHex(...resRgb);
         
         // Render Source Swatch
         sContainer.appendChild(createSwatch(pair.source));
